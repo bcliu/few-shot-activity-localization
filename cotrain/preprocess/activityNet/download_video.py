@@ -21,7 +21,7 @@ os.system(command1)
 for i in videos:
     url = video_database[i]['url']
     command3 = 'youtube-dl -o '+'videos/'+i+' '+url
-    print command3
+    print(command3)
     os.system(command3)
 
 
