@@ -23,8 +23,8 @@ min_length = 3
 overlap_thresh = 0.7
 STEP = LENGTH / 4
 WINS = [LENGTH * 1]
-FRAME_DIR = '/media/F/THUMOS14'
-META_DIR = os.path.join(FRAME_DIR, 'annotation_')
+FRAME_DIR = '/home/vltava/disk2/THUMOS14/frames'
+META_DIR = '/home/vltava/disk2/THUMOS14/annotations_'
 
 print ('Generate Training Segments')
 train_segment = dataset_label_parser(META_DIR+'val', 'val', use_ambiguous=False)
@@ -52,6 +52,7 @@ def generate_roidb(split, segment):
   roidb = []
   for vid in segment:
     if vid in video_list:
+      print(vid)
       length = len(os.listdir(os.path.join(VIDEO_PATH, vid)))
       db = np.array(segment[vid])
       if len(db) == 0:
@@ -59,6 +60,7 @@ def generate_roidb(split, segment):
       db[:,:2] = db[:,:2] * FPS
 
       for win in WINS:
+        print(win)
         # inner of windows
         stride = int(win / LENGTH)
         # Outer of windows

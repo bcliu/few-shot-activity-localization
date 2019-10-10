@@ -13,10 +13,10 @@ import glob
 
 fps = 25
 ext = '.mp4'
-VIDEO_DIR = '/media/G/DataSets/THUMOS'
-FRAME_DIR = '/media/F/THUMOS14'
+VIDEO_DIR = '/home/vltava/disk2/THUMOS14/videos'
+FRAME_DIR = '/home/vltava/disk2/THUMOS14/frames'
 
-META_DIR = os.path.join(FRAME_DIR, 'annotation_')
+META_DIR = '/home/vltava/disk2/THUMOS14/annotations_'
 
 def generate_frame(split):
   SUB_FRAME_DIR = os.path.join(FRAME_DIR, split)
@@ -35,5 +35,5 @@ def generate_frame(split):
     print (filename, fps, frame_size)
 
 generate_frame('val')
-#generate_frame('test')
+generate_frame('test')
 #generate_frame('testing')

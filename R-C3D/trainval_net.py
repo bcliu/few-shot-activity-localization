@@ -129,6 +129,8 @@ def train_net(tdcnn_demo, dataloader, optimizer, args):
         
     data_start = time.time()
     for step, (video_data, gt_twins, num_gt) in enumerate(dataloader):
+        print(step)
+        print("loc1")
         video_data = video_data.cuda()
         gt_twins = gt_twins.cuda()
         data_time = time.time()-data_start
@@ -139,15 +141,17 @@ def train_net(tdcnn_demo, dataloader, optimizer, args):
         loss = rpn_loss_cls.mean() + rpn_loss_twin.mean() \
            + RCNN_loss_cls.mean() + RCNN_loss_twin.mean()          
         loss_temp += loss.item()
-
+	
+        print("loc2")
         # backward
         optimizer.zero_grad()
         loss.backward()
         # if args.net == "vgg16": clip_gradient(tdcnn_demo, 100.)
         optimizer.step()
-
+        print("loc3")
         if step % args.disp_interval == 0:
             end = time.time()
+            print("loc4")
             if step > 0:
                 loss_temp /= args.disp_interval
 
