@@ -2,4 +2,4 @@
 Few-shot temporal activity localization
 
 ## RC3D
-In the wendi_rc3d folder
+In the rc3d_wendi folder
