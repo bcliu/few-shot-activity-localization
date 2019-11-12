@@ -96,7 +96,7 @@ def comp_pairwise_dist():
         print('Those closest to %d are %s' % (i, str(sorted_idx[:5])))
 
 
-def test_net(tdcnn_demo, dataloader, args):
+def test_net(tdcnn_demo, dataloader, args, fewshot_trimmed_dataloader, loaded_all_few_shot_features=None):
     start = time.time()
     # TODO: Add restriction for max_per_video
     max_per_video = 0
@@ -114,6 +114,28 @@ def test_net(tdcnn_demo, dataloader, args):
     tdcnn_demo.eval()
     empty_array = np.transpose(np.array([[], [], []]), (1, 0))
 
+    if loaded_all_few_shot_features is not None:
+        all_fewshot_features = loaded_all_few_shot_features
+    else:
+        all_fewshot_features = {}
+
+    if loaded_all_few_shot_features is None:
+        print('Loading fewshot trimmed videos')
+        for i, (video_data, gt_twins, num_gt) in enumerate(fewshot_trimmed_dataloader):
+            class_idx = torch.squeeze(gt_twins)[0, 2].item()
+            if class_idx in all_fewshot_features:
+                continue
+            print('Class idx: %d' % class_idx)
+            video_data = video_data.cuda()
+            gt_twins = gt_twins.cuda()
+            tdcnn_demo(video_data, gt_twins, whole_vid_for_testing=True)
+            fewshot_features = torch.squeeze(tdcnn_demo.module.pooled_feat)
+            all_fewshot_features[class_idx] = fewshot_features
+
+        pickle.dump(all_fewshot_features, open('/home/vltava/fewshot_features.pkl', 'wb'))
+
+    print('Got %d few shot features' % len(all_fewshot_features))
+
     data_tic = time.time()
     for i, (video_data, gt_twins, num_gt, video_info) in enumerate(dataloader):
         video_data = video_data.cuda()
@@ -123,15 +145,17 @@ def test_net(tdcnn_demo, dataloader, args):
         data_time = data_toc - data_tic
 
         det_tic = time.time()
-        rois, cls_prob, twin_pred = tdcnn_demo(video_data, gt_twins, whole_vid_for_testing=True)
+        rois, cls_prob, twin_pred = tdcnn_demo(video_data, gt_twins, whole_vid_for_testing=False)
         print('rois shape: %s' % str(rois.shape))
         print('pooled_feat dim: %s' % str(tdcnn_demo.module.pooled_feat.shape))
-        combined_pooled_feat.append(torch.squeeze(tdcnn_demo.module.pooled_feat))
+        # combined_pooled_feat.append(torch.squeeze(tdcnn_demo.module.pooled_feat))
         #        rpn_loss_cls, rpn_loss_twin, \
         #        RCNN_loss_cls, RCNN_loss_twin, rois_label = tdcnn_demo(video_data, gt_twins)
 
         scores_all = cls_prob.data
         twins = rois.data[:, :, 1:3]
+
+        print('cls_prob shape: %s, twin_pred shape: %s' % (str(cls_prob.shape), str(twin_pred.shape)))
 
         if cfg.TEST.TWIN_REG:
             # Apply bounding-twin regression deltas
@@ -162,14 +186,30 @@ def test_net(tdcnn_demo, dataloader, args):
             class_with_highest_score = None
             highest_score = None
             for j in xrange(1, args.num_classes):
+                # We know that the test example is one among the 14
+                if j not in loaded_all_few_shot_features:
+                    continue
+
+                # scores[:, j] shape: torch.Size([300])
+                for score_i in range(scores[:, j].shape[0]):
+                    vec1 = torch.squeeze(tdcnn_demo.module.pooled_feat[score_i])
+                    vec2 = loaded_all_few_shot_features[j]
+                    scores[:, j][score_i] = torch.nn.functional.cosine_similarity(
+                        vec1, vec2, dim=0)
+                    # print('updated score at %d is %f' % (score_i, scores[:, j][score_i]))
+
                 inds = torch.nonzero(scores[:, j] > thresh).view(-1)
+
                 # if there is det
                 if inds.numel() > 0:
                     cls_scores = scores[:, j][inds]
                     _, order = torch.sort(cls_scores, 0, True)
                     cls_twins = pred_twins[inds][:, j * 2:(j + 1) * 2]
+                    # print(inds)
 
                     cls_dets = torch.cat((cls_twins, cls_scores.unsqueeze(1)), 1)
+                    # print('cls_dets shape: %s' % str(cls_dets.shape))
+                    # print(cls_dets)
                     # cls_dets = torch.cat((cls_twins, cls_scores), 1)
                     cls_dets = cls_dets[order]
                     keep = nms(cls_dets, cfg.TEST.NMS)
@@ -255,13 +295,19 @@ if __name__ == '__main__':
     print('Using config:')
     pprint.pprint(cfg)
 
-    roidb_path = args.roidb_dir + "/" + args.dataset + "/" + args.imdbval_name
-    roidb = get_roidb(roidb_path)
-    dataset = roibatchLoader(roidb, phase='test')
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
+    trimmed_fewshot_roidb_path = args.roidb_dir + "/" + args.dataset + "/trimmed_14_cls.pkl"
+    trimmed_fewshot_roidb = get_roidb(trimmed_fewshot_roidb_path)
+    trimmed_fewshot_dataset = roibatchLoader(trimmed_fewshot_roidb, phase='train')
+    trimmed_fewshot_dataloader = torch.utils.data.DataLoader(trimmed_fewshot_dataset, batch_size=args.batch_size,
                                              num_workers=args.num_workers, shuffle=False)
 
-    num_videos = len(dataset)
+    untrimmed_test_roidb_path = args.roidb_dir + "/" + args.dataset + "/" + args.imdbval_name
+    untrimmed_test_roidb = get_roidb(untrimmed_test_roidb_path)
+    untrimmed_test_dataset = roibatchLoader(untrimmed_test_roidb, phase='test')
+    untrimmed_test_dataloader = torch.utils.data.DataLoader(untrimmed_test_dataset, batch_size=args.batch_size,
+                                             num_workers=args.num_workers, shuffle=False)
+
+    num_videos = len(untrimmed_test_dataset)
     args.num_videos = num_videos
     print('{:d} roidb entries'.format(num_videos))
 
@@ -312,4 +358,4 @@ if __name__ == '__main__':
         # assert len(args.gpus) == args.batch_size, "only support one batch_size for one gpu"
         tdcnn_demo = nn.parallel.DataParallel(tdcnn_demo, device_ids=args.gpus)
 
-    test_net(tdcnn_demo, dataloader, args)
+    test_net(tdcnn_demo, untrimmed_test_dataloader, args, trimmed_fewshot_dataloader, loaded_all_few_shot_features=pickle.load(open('/home/vltava/fewshot_features.pkl', 'rb')))

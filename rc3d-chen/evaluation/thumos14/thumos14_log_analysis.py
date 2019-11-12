@@ -147,7 +147,7 @@ def get_segments(data, thresh, framerate):
                 score = float(l.split()[-2])    
                             
             if (left_frame >= right_frame):
-                print("???", l)
+                # print("???", l)
                 continue
                 
             if right_frame > end_frame:
