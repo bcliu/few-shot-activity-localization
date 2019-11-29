@@ -1,0 +1,14 @@
+BasketballDunk
+CleanAndJerk
+CricketBowling
+CricketShot
+Diving
+FrisbeeCatch
+GolfSwing
+HighJump
+JavelinThrow
+LongJump
+PoleVault
+Shotput
+TennisSwing
+ThrowDiscus

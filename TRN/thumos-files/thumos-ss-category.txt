@@ -1,0 +1,6 @@
+BaseballPitch
+Billiards
+CliffDiving
+HammerThrow
+SoccerPenalty
+VolleyballSpiking
