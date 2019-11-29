@@ -295,11 +295,11 @@ if __name__ == '__main__':
     print('Using config:')
     pprint.pprint(cfg)
 
-    trimmed_fewshot_roidb_path = args.roidb_dir + "/" + args.dataset + "/trimmed_14_cls.pkl"
-    trimmed_fewshot_roidb = get_roidb(trimmed_fewshot_roidb_path)
-    trimmed_fewshot_dataset = roibatchLoader(trimmed_fewshot_roidb, phase='train')
-    trimmed_fewshot_dataloader = torch.utils.data.DataLoader(trimmed_fewshot_dataset, batch_size=args.batch_size,
-                                             num_workers=args.num_workers, shuffle=False)
+    trimmed_support_set_roidb_path = os.path.join(args.roidb_dir, args.dataset, "trimmed_14_cls.pkl")
+    trimmed_support_set_roidb = get_roidb(trimmed_support_set_roidb_path)
+    trimmed_support_set_dataset = roibatchLoader(trimmed_support_set_roidb, phase='train')
+    trimmed_support_set_dataloader = torch.utils.data.DataLoader(trimmed_support_set_dataset, batch_size=args.batch_size,
+                                                                 num_workers=args.num_workers, shuffle=False)
 
     untrimmed_test_roidb_path = args.roidb_dir + "/" + args.dataset + "/" + args.imdbval_name
     untrimmed_test_roidb = get_roidb(untrimmed_test_roidb_path)
@@ -358,4 +358,4 @@ if __name__ == '__main__':
         # assert len(args.gpus) == args.batch_size, "only support one batch_size for one gpu"
         tdcnn_demo = nn.parallel.DataParallel(tdcnn_demo, device_ids=args.gpus)
 
-    test_net(tdcnn_demo, untrimmed_test_dataloader, args, trimmed_fewshot_dataloader, loaded_all_few_shot_features=pickle.load(open('/home/vltava/fewshot_features.pkl', 'rb')))
+    test_net(tdcnn_demo, untrimmed_test_dataloader, args, trimmed_support_set_dataloader, loaded_all_few_shot_features=pickle.load(open('/home/vltava/fewshot_features.pkl', 'rb')))

@@ -18,10 +18,10 @@ FPS = 25
 LENGTH = 768
 STEP = LENGTH / 4
 WINS = [LENGTH * 1]
-# FRAME_DIR = '/media/F/THUMOS14'
-# META_DIR = os.path.join(FRAME_DIR, 'annotation_')
-FRAME_DIR = '/home/vltava/disk2/THUMOS14_fewshot/frames'
-META_DIR = '/home/vltava/disk2/THUMOS14_fewshot/annotations_'
+
+DATASET_ROOT = '/home/vltava/disk2/THUMOS14_valtest_combined_fewshot'
+FRAME_DIR = os.path.join(DATASET_ROOT, 'frames')
+META_DIR = os.path.join(DATASET_ROOT, 'annotations_')
 
 USE_FLIPPED = False
 ###

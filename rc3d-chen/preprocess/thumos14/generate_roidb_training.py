@@ -26,8 +26,8 @@ WINS = [LENGTH * 1]
 # FRAME_DIR = '/media/F/THUMOS14'
 # META_DIR = os.path.join(FRAME_DIR, 'annotation_')
 
-FRAME_DIR = '/home/vltava/disk2/UCF_trimmed/frames'
-META_DIR = '/home/vltava/disk2/UCF_trimmed/annotations_'
+FRAME_DIR = '/home/vltava/disk2/UCF_train_support_set/frames'
+META_DIR = '/home/vltava/disk2/UCF_train_support_set/annotations_'
 
 
 print ('Generate Training Segments')

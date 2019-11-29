@@ -182,7 +182,7 @@ def train_net(tdcnn_demo, dataloader, optimizer, args):
 
             loss_temp = 0
 
-    
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -243,7 +243,7 @@ if __name__ == '__main__':
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
                              num_workers=args.num_workers, shuffle=True)
       
-    # initilize the network here.
+    # initialize the network here.
     if args.net == 'c3d':
         tdcnn_demo = c3d_tdcnn(pretrained=True)
     elif args.net == 'res18':
@@ -265,8 +265,11 @@ if __name__ == '__main__':
         if value.requires_grad:
             print(key)
             if 'bias' in key:
-                params += [{'params':[value],'lr': args.lr*(cfg.TRAIN.DOUBLE_BIAS + 1), \
-                    'weight_decay': cfg.TRAIN.BIAS_DECAY and cfg.TRAIN.WEIGHT_DECAY or 0}]
+                params += [{
+                    'params': [value],
+                    'lr': args.lr*(cfg.TRAIN.DOUBLE_BIAS + 1),
+                    'weight_decay': cfg.TRAIN.BIAS_DECAY and cfg.TRAIN.WEIGHT_DECAY or 0
+                }]
             else:
                 params += [{'params':[value],'lr': args.lr, 'weight_decay': cfg.TRAIN.WEIGHT_DECAY}]
 
