@@ -163,15 +163,17 @@ def create_sampled_support_set_dataset(support_set_roidb, classes_to_sample, sam
         for cls in classes_in_batch:
             idx_of_class = [idx for idx, val in enumerate(support_set_roidb) if cls in val['gt_classes']]
             sampled_idx = random.sample(idx_of_class, samples_per_class)
-            sampled_batch.append([support_set_roidb[i] for i in sampled_idx])
-        sampled_roidb.append(sampled_batch)
+            sampled_batch += [support_set_roidb[i] for i in sampled_idx]
+        sampled_roidb += sampled_batch
     dataset = roibatchLoader(sampled_roidb)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
-                                             num_workers=args.num_workers, shuffle=True)
+                                             num_workers=args.num_workers, shuffle=False)
     return dataloader
 
-def get_support_set_features(dataloader):
-    pass
+def get_support_set_features(dataloader, model):
+    for step, (video_data, gt_twins, num_gt) in enumerate(dataloader):
+        video_data = video_data.cuda()
+        gt_twins = gt_twins.cuda()
 
 def train_net(tdcnn_demo, dataloader, optimizer, args, train_class_list, support_set_roidb):
     # setting to train mode
@@ -191,7 +193,7 @@ def train_net(tdcnn_demo, dataloader, optimizer, args, train_class_list, support
 
         tdcnn_demo.zero_grad()
         rois, cls_prob, twin_pred, rpn_loss_cls, rpn_loss_twin, \
-        RCNN_loss_cls, RCNN_loss_twin, rois_label = tdcnn_demo(video_data, None, gt_twins)
+        RCNN_loss_cls, RCNN_loss_twin, rois_label = tdcnn_demo(video_data, support_set_dataloader, gt_twins)
         loss = rpn_loss_cls.mean() + rpn_loss_twin.mean() + RCNN_loss_cls.mean() + RCNN_loss_twin.mean()
         loss_temp += loss.item()
         time2 = time.time()

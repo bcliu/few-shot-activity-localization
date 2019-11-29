@@ -45,13 +45,39 @@ class _TDCNN_Fewshot(nn.Module):
     def prepare_data(self, video_data):
         return video_data
 
-    def forward(self, video_data, support_set_data, gt_twins, whole_vid_for_testing=False):
+    def extract_support_set_features(self, support_set_dataloader):
+        all_features = []
+        labels = []
+        for step, (video_data, gt_twins, num_gt) in enumerate(support_set_dataloader):
+            video_data = video_data.cuda()
+            gt_twins = gt_twins.cuda().data
+            batch_size = video_data.size(0)
+            video_data = self.prepare_data(video_data)
+            base_feat = self.RCNN_base(video_data)
+
+            # Video length is always resized to 768
+            # TODO: replicate the vectors here
+            # TODO: verify whether this is correct
+            rois = Variable(torch.Tensor([[0.0, 0.0, 767.0], [1.0, 0.0, 767.0]]).cuda(), requires_grad=False)
+            if cfg.POOLING_MODE == 'pool':
+                pooled_feat = self.RCNN_roi_temporal_pool(base_feat, rois.view(-1, 3))
+            if cfg.USE_ATTENTION:
+                pooled_feat = self.RCNN_attention(pooled_feat)
+            fewshot_features = self._head_to_tail(pooled_feat)
+            # Dimensions of fewshot_features: batch_size x 4096
+            all_features.append(fewshot_features)
+            labels.append(gt_twins[:, 0, 2])
+        return all_features
+
+    def forward(self, video_data, support_set_dataloader, gt_twins, whole_vid_for_testing=False):
         """
         :param video_data:
-        :param support_set_data: trimmed support set videos data
+        :param support_set_dataloader: trimmed support set videos dataloader
         :param gt_twins: Ground truth timestamps + class label. Format: (start, end, label)
         :return:
         """
+        support_set_features = self.extract_support_set_features(support_set_dataloader)
+
         batch_size = video_data.size(0)
 
         gt_twins = gt_twins.data
@@ -89,7 +115,8 @@ class _TDCNN_Fewshot(nn.Module):
         if cfg.POOLING_MODE == 'pool':
 
             # print('FINDING OUT DIFF BETWEEN GT_TWINS AND ROIS: %s, %s' % (str(gt_twins), str(rois.view(-1, 3))))
-            pooled_feat = self.RCNN_roi_temporal_pool(base_feat, rois.view(-1, 3))
+            reshaped_rois = rois.view(-1, 3)
+            pooled_feat = self.RCNN_roi_temporal_pool(base_feat, reshaped_rois)
             # dimensions: 128 x 512 x 1 x 4 x 4
             # print('pooled_feat dim: %s' % str(pooled_feat.shape))
 
