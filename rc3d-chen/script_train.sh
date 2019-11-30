@@ -13,7 +13,7 @@ LOG="output/${NET_DIR}/${DATASET}/train_log_${i}.txt.`date +'%Y-%m-%d_%H-%M-%S'`
 exec &> >(tee -a "$LOG")
 echo Logging output to "$LOG"
 
-python -i ./trainval_net.py \
+python -i ./trainval_fewshot_net.py \
   --net ${NET_DIR} \
   --dataset ${DATASET} \
   ${EXTRA_ARGS}
