@@ -17,6 +17,7 @@ from model.utils.non_local_dot_product import NONLocalBlock3D
 
 DEBUG = False
 
+SUPPORT_SET_SIZE = 4
 
 # Fewshot 3D CNN
 class _TDCNN_Fewshot(nn.Module):
@@ -63,22 +64,13 @@ class _TDCNN_Fewshot(nn.Module):
             pooled_feat = self.RCNN_attention(pooled_feat)
         fewshot_features = self._head_to_tail(pooled_feat)
         # Dimensions of fewshot_features: batch_size x 4096
-        return fewshot_features, gt_twins[:, 0, 2]
-
-    def extract_support_set_features(self, support_set_dataloader):
-        all_features = []
-        labels = []
-        for step, (video_data, gt_twins, num_gt) in enumerate(support_set_dataloader):
-            fewshot_features, label = self.forward_support_set(video_data, gt_twins)
-            all_features.append(fewshot_features)
-            labels.append(label)
-        return torch.cat(all_features), torch.tensor(torch.cat(labels), dtype=torch.int64).cuda()
+        return fewshot_features, torch.tensor(gt_twins[:, 0, 2], dtype=torch.int64).cuda()
 
     def compute_fewshot_cls_loss(self, support_set_features, support_set_labels, test_features, rois_label):
         """
         Fewshot classification loss by comparing test video features against support set video features
-        :param support_set_features: [4x4096]
-        :param support_set_labels: [4]
+        :param support_set_features: [SUPPORT_SET_SIZEx4096]
+        :param support_set_labels: [SUPPORT_SET_SIZE]
         :param test_features: [128x4096]
         :param rois_label: [128]
         :return A tensor with a single number representing the cross entropy loss
@@ -90,6 +82,7 @@ class _TDCNN_Fewshot(nn.Module):
         for i in range(support_set_labels.shape[0]):
             similarities[:, i] = F.cosine_similarity(support_set_features[i].unsqueeze(0), valid_features).cuda()
         softmax_out = F.softmax(similarities, dim=1).cuda()
+        # TODO: this assumes that each class has only one example. Handle the case when there are multiple examples
         labels_idx = torch.tensor([(support_set_labels == j).nonzero().item() for j in valid_labels], dtype=torch.int64).cuda()
         cross_entropy = F.cross_entropy(softmax_out, labels_idx)
 
@@ -99,7 +92,7 @@ class _TDCNN_Fewshot(nn.Module):
 
         return cross_entropy
 
-    def forward(self, video_data, support_set_features, support_set_labels, gt_twins, whole_vid_for_testing=False):
+    def forward(self, video_data, support_set_features, support_set_labels, gt_twins, is_support_set=False):
         """
         :param video_data:
         :param support_set_features: Trimmed support set video features
@@ -107,14 +100,17 @@ class _TDCNN_Fewshot(nn.Module):
         :param gt_twins: Ground truth timestamps + class label. Format: (start, end, label)
         :return:
         """
+        if is_support_set:
+            return self.forward_support_set(video_data, gt_twins)
+
         # NOTE: this method is called on multiple threads. So batch_size could be 1 here even though it's set to 2
         # indicating that this is executed on multiple GPUs
         batch_size = video_data.size(0)
 
         support_set_features = support_set_features.squeeze()
         support_set_labels = support_set_labels.squeeze()
-        assert support_set_labels.shape[0] == 4
-        assert support_set_features.shape[0] == 4
+        assert support_set_labels.shape[0] == SUPPORT_SET_SIZE
+        assert support_set_features.shape[0] == SUPPORT_SET_SIZE
 
         gt_twins = gt_twins.data
         # prepare data
@@ -140,9 +136,6 @@ class _TDCNN_Fewshot(nn.Module):
             rois_outside_ws = None
             rpn_loss_cls = 0
             rpn_loss_twin = 0
-
-            if whole_vid_for_testing:
-                rois = torch.Tensor([[[0.0, 0.0, 767.0]]]).cuda()
 
         rois = Variable(rois)
         # do roi pooling based on predicted rois

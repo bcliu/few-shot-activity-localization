@@ -30,6 +30,7 @@ from model.utils.net_utils import weights_normal_init, save_net, load_net, \
 
 # from model.rpn.c3d import c3d
 from model.tdcnn.c3d_fewshot import C3D, c3d_tdcnn_fewshot
+from model.tdcnn.tdcnn_fewshot import SUPPORT_SET_SIZE
 from model.tdcnn.i3d import I3D, i3d_tdcnn
 from model.tdcnn.resnet import resnet_tdcnn
 from model.tdcnn.eco import eco_tdcnn
@@ -141,7 +142,6 @@ def sample_support_set_classes(gt_twins, all_train_classes):
     :param all_train_classes: List of id of all classes for training
     :return: 4 sampled class ids for support set
     """
-    size_support_set = 4
     batch_size, num_intervals, _ = gt_twins.shape
     # Having batch size > 1 and support set size > 4 causes out of memory error in GPU, so sampling classes
     # across all batches instead of one support set per batch
@@ -150,12 +150,12 @@ def sample_support_set_classes(gt_twins, all_train_classes):
         classes_in_ground_truths += [int(gt_twins[batch, j, 2].data.tolist()) for j in range(num_intervals) if gt_twins[batch, j, 2] in train_class_list]
 
     classes_in_ground_truths = set(classes_in_ground_truths)
-    if len(classes_in_ground_truths) >= size_support_set:
-        return list(classes_in_ground_truths)[:size_support_set]
+    if len(classes_in_ground_truths) >= SUPPORT_SET_SIZE:
+        return list(classes_in_ground_truths)[:SUPPORT_SET_SIZE]
 
     classes_not_selected = [c for c in all_train_classes if c not in classes_in_ground_truths]
-    randomly_selected = random.sample(classes_not_selected, size_support_set - len(classes_in_ground_truths))
-    return randomly_selected + list(classes_in_ground_truths)
+    randomly_selected = random.sample(classes_not_selected, SUPPORT_SET_SIZE - len(classes_in_ground_truths))
+    return list(classes_in_ground_truths) + randomly_selected
 
 def create_sampled_support_set_dataset(support_set_roidb, classes_to_sample, samples_per_class=1):
     sampled_roidb = []
@@ -164,7 +164,7 @@ def create_sampled_support_set_dataset(support_set_roidb, classes_to_sample, sam
         sampled_idx = random.sample(idx_of_class, samples_per_class)
         sampled_roidb += [support_set_roidb[i] for i in sampled_idx]
     dataset = roibatchLoader(sampled_roidb)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1,
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=len(sampled_roidb),
                                              num_workers=args.num_workers, shuffle=False)
     return dataloader
 
@@ -183,15 +183,21 @@ def train_net(tdcnn_demo, dataloader, optimizer, args, train_class_list, support
         support_set_dataloader = create_sampled_support_set_dataset(support_set_roidb, sampled_support_set_classes)
 
         tdcnn_demo.zero_grad()
-        # Because we can't pass dataloader to forward() due to an assertion that requires all input parameters to be
-        # cuda(), do it before forward() instead. This causes support set feature extraction to be run on only one GPU
-        # in main thread while all others wait in idle, which is not ideal
-        support_set_features, support_set_labels = tdcnn_demo.module.extract_support_set_features(support_set_dataloader)
+
+        # Take advantage of data parallelism to split up the work of forwarding support set
+        for _, (support_set_video_data, support_set_gt_twins, _) in enumerate(support_set_dataloader):
+            support_set_features, support_set_labels = \
+                tdcnn_demo(support_set_video_data, None, None, support_set_gt_twins, True)
+            # There should only be one iteration
+            break
+        print(f'Support set labels: {support_set_labels}')
+
         # Repeat support_set_features and support_set_labels batch_size times so that each GPU gets its own copy
         rois, cls_prob, twin_pred, rpn_loss_cls, rpn_loss_twin, RCNN_loss_cls, RCNN_loss_twin, rois_label, \
             fewshot_cls_loss = tdcnn_demo(video_data,
                                           torch.cat(args.batch_size * [support_set_features.unsqueeze(0)]),
-                                          torch.cat(args.batch_size * [support_set_labels.unsqueeze(0)]), gt_twins)
+                                          torch.cat(args.batch_size * [support_set_labels.unsqueeze(0)]),
+                                          gt_twins)
         # Returned losses are gathered from all GPUs, so taking mean() is necessary
         loss = rpn_loss_cls.mean() + rpn_loss_twin.mean() + RCNN_loss_cls.mean() + RCNN_loss_twin.mean() + \
                fewshot_cls_loss.mean()
@@ -205,11 +211,6 @@ def train_net(tdcnn_demo, dataloader, optimizer, args, train_class_list, support
         loss.backward()
         # if args.net == "vgg16": clip_gradient(tdcnn_demo, 100.)
         optimizer.step()
-
-        del support_set_dataloader
-        del support_set_features
-        del support_set_labels
-        del fewshot_cls_loss
 
         if step % args.disp_interval == 0:
             print('Time per iteration: %f' % ((time.time() - time_before_print) * 1.0 / args.disp_interval))
