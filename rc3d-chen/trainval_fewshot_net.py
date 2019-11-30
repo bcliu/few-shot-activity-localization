@@ -200,7 +200,7 @@ def train_net(tdcnn_demo, dataloader, optimizer, args, train_class_list, support
                                           gt_twins)
         # Returned losses are gathered from all GPUs, so taking mean() is necessary
         loss = rpn_loss_cls.mean() + rpn_loss_twin.mean() + RCNN_loss_cls.mean() + RCNN_loss_twin.mean() + \
-               fewshot_cls_loss.mean()
+               fewshot_cls_loss.mean() * 3
         loss_temp += loss.item()
         time2 = time.time()
 

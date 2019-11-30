@@ -78,15 +78,16 @@ class _TDCNN_Fewshot(nn.Module):
         valid_test_features_idx = [i for i in range(rois_label.shape[0]) if rois_label[i] in support_set_labels]
         valid_features = test_features[valid_test_features_idx]
         valid_labels = rois_label[valid_test_features_idx]
-        similarities = torch.zeros(valid_features.shape[0], support_set_labels.shape[0])
+        similarities = torch.zeros(valid_features.shape[0], support_set_labels.shape[0]).cuda()
         for i in range(support_set_labels.shape[0]):
-            similarities[:, i] = F.cosine_similarity(support_set_features[i].unsqueeze(0), valid_features).cuda()
-        softmax_out = F.softmax(similarities, dim=1).cuda()
+            similarities[:, i] = F.cosine_similarity(support_set_features[i].unsqueeze(0), valid_features)
+        # softmax smoothed out things too much
+        # softmax_out = F.softmax(similarities, dim=1).cuda()
         # TODO: this assumes that each class has only one example. Handle the case when there are multiple examples
         labels_idx = torch.tensor([(support_set_labels == j).nonzero().item() for j in valid_labels], dtype=torch.int64).cuda()
-        cross_entropy = F.cross_entropy(softmax_out, labels_idx)
+        cross_entropy = F.cross_entropy(similarities, labels_idx)
 
-        max_idx = torch.argmax(softmax_out, dim=1)
+        max_idx = torch.argmax(similarities, dim=1)
         correct_count = len((max_idx == labels_idx).nonzero())
         print(f'Correct predictions: {correct_count} out of {len(labels_idx)}. Cross entropy loss: {cross_entropy}')
 
