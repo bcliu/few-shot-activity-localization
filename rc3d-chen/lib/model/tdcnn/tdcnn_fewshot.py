@@ -195,7 +195,7 @@ class _TDCNN_Fewshot(nn.Module):
         if self.training:
             # Wrapping fewshot_cls_loss with array to fix "tensor has no dimensions" error when gathering outputs
             return rois, cls_prob, twin_pred, rpn_loss_cls, rpn_loss_twin, RCNN_loss_cls, RCNN_loss_twin, rois_label,\
-                   torch.tensor([fewshot_cls_loss]).cuda()
+                   fewshot_cls_loss.unsqueeze(0).cuda()
         else:
             return rois, cls_prob, twin_pred
 
