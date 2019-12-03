@@ -100,21 +100,13 @@ def comp_pairwise_dist():
 def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
     FEWSHOT_FEATURES_PATH = '/home/vltava/fewshot_features_5_shot.pkl'
 
-    dataloader = untrimmed_test_dataloader
-
     start = time.time()
-    # TODO: Add restriction for max_per_video
-    max_per_video = 0
 
-    thresh = 0.9
-
-    all_twins = [[[] for _ in xrange(args.num_videos)]
-                 for _ in xrange(args.num_classes)]
+    thresh = 0.7
 
     _t = {'im_detect': time.time(), 'misc': time.time()}
 
     tdcnn_demo.eval()
-    empty_array = np.transpose(np.array([[], [], []]), (1, 0))
 
     if exists(FEWSHOT_FEATURES_PATH):
         all_fewshot_features = pickle.load(open(FEWSHOT_FEATURES_PATH, 'rb'))
@@ -140,12 +132,9 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
     support_set_features = all_fewshot_features[0]
     support_set_labels = all_fewshot_features[1]
 
-    print(f'Got {support_set_features.shape[0]} few shot features')
-    print(f'Labels: {support_set_labels}')
-    print(f'Features shape: {support_set_features.shape}')
+    # print(f'Got {support_set_features.shape[0]} few shot features')
 
     unique_support_set_labels = support_set_labels.cpu().unique(sorted=True).cuda()
-    print(f'Unique labels: {unique_support_set_labels}')
 
     data_tic = time.time()
     for i, (video_data, gt_twins, num_gt, video_info, fewshot_label) in enumerate(dataloader):
@@ -213,7 +202,7 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
 
                 inds = torch.nonzero(fewshot_scores_of_batch[:, j] > thresh).view(-1)
 
-                label_id = batch_support_set_labels[j].item()
+                label_id = unique_batch_support_set_labels[j].item()
 
                 # if there is detection
                 if inds.numel() > 0:
@@ -228,24 +217,14 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
                         cls_dets = cls_dets[keep.view(-1).long()]
                         print("activity: ", label_id)
                         print(cls_dets.cpu().numpy())
-
-                    # TODO: fix this
-                    # all_twins[label_id][i * batch_size + b] = cls_dets.cpu().numpy()
-                # else:
-                    # all_twins[label_id][i * batch_size + b] = empty_array
+                else:
+                    pass
+                    # DEBUGGING ONLY. If this is the correct label but no detection, return scores
+                    # if label_id == fewshot_label[b].item():
+                        # print(f'**** FAILED TO DETECT CLASS: {fewshot_scores_softmax_of_batch[:, j].mean()}')
 
             most_likely_labels = unique_batch_support_set_labels[torch.sort(fewshot_scores_of_batch, descending=True)[1]]
             most_likely_labels_softmax = unique_batch_support_set_labels[torch.sort(fewshot_scores_softmax_of_batch, descending=True)[1]]
-
-            # Limit to max_per_video detections *over all classes*
-            # if max_per_video > 0:
-            #     video_scores = np.hstack([all_twins[j][i * batch_size + b][:, -1]
-            #                               for j in xrange(1, args.num_classes)])
-            #     if len(video_scores) > max_per_video:
-            #         video_thresh = np.sort(video_scores)[-max_per_video]
-            #         for j in xrange(1, args.num_classes):
-            #             keep = np.where(all_twins[j][i * batch_size + b][:, -1] >= video_thresh)[0]
-            #             all_twins[j][i * batch_size + b] = all_twins[j][i * batch_size + b][keep, :]
 
             misc_toc = time.time()
             nms_time = misc_toc - misc_tic
