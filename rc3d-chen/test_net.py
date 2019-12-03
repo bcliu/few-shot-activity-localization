@@ -27,18 +27,17 @@ from model.rpn.twin_transform import clip_twins
 from model.nms.nms_wrapper import nms
 from model.rpn.twin_transform import twin_transform_inv
 from model.utils.net_utils import save_net, load_net, vis_detections
-from model.tdcnn.c3d import C3D, c3d_tdcnn
+from model.tdcnn.c3d import C3D
+from model.tdcnn.c3d_fewshot import C3D, c3d_tdcnn_fewshot
 from model.tdcnn.i3d import I3D, i3d_tdcnn
 from model.utils.blob import prep_im_for_blob, video_list_to_blob
 from model.tdcnn.resnet import resnet34, resnet50, resnet_tdcnn
+from os.path import exists
 
 # np.set_printoptions(threshold='nan')
 DEBUG = False
 
-try:
-    xrange  # Python 2
-except NameError:
-    xrange = range  # Python 3
+xrange = range  # Python 3
 
 
 def parse_args():
@@ -96,15 +95,13 @@ def comp_pairwise_dist():
         print('Those closest to %d are %s' % (i, str(sorted_idx[:5])))
 
 
-def test_net(tdcnn_demo, dataloader, args, fewshot_trimmed_dataloader, loaded_all_few_shot_features=None):
+def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
+    FEWSHOT_FEATURES_PATH = '/home/vltava/fewshot_features.pkl'
     start = time.time()
     # TODO: Add restriction for max_per_video
     max_per_video = 0
 
-    if args.vis:
-        thresh = 0.05
-    else:
-        thresh = 0.005
+    thresh = 0.9
 
     all_twins = [[[] for _ in xrange(args.num_videos)]
                  for _ in xrange(args.num_classes)]
@@ -114,29 +111,39 @@ def test_net(tdcnn_demo, dataloader, args, fewshot_trimmed_dataloader, loaded_al
     tdcnn_demo.eval()
     empty_array = np.transpose(np.array([[], [], []]), (1, 0))
 
-    if loaded_all_few_shot_features is not None:
-        all_fewshot_features = loaded_all_few_shot_features
+    if exists(FEWSHOT_FEATURES_PATH):
+        all_fewshot_features = pickle.load(open('/home/vltava/fewshot_features.pkl', 'rb'))
     else:
-        all_fewshot_features = {}
+        import trainval_fewshot_net
+        import importlib
+        importlib.reload(trainval_fewshot_net)
 
-    if loaded_all_few_shot_features is None:
+        support_set_dataloader = trainval_fewshot_net.create_sampled_support_set_dataset(trimmed_support_set_roidb,
+                                                                                         [2, 4, 6, 7, 8, 9, 10, 12, 13,
+                                                                                          14, 15, 16, 18, 19],
+                                                                                         batch_size=args.batch_size,
+                                                                                         num_workers=args.num_workers)
         print('Loading fewshot trimmed videos')
-        for i, (video_data, gt_twins, num_gt) in enumerate(fewshot_trimmed_dataloader):
-            class_idx = torch.squeeze(gt_twins)[0, 2].item()
-            if class_idx in all_fewshot_features:
-                continue
-            print('Class idx: %d' % class_idx)
-            video_data = video_data.cuda()
-            gt_twins = gt_twins.cuda()
-            tdcnn_demo(video_data, gt_twins, whole_vid_for_testing=True)
-            fewshot_features = torch.squeeze(tdcnn_demo.module.pooled_feat)
-            all_fewshot_features[class_idx] = fewshot_features
+        feature_vectors = []
+        feature_labels = []
+        for _, (video_data, gt_twins, _) in enumerate(support_set_dataloader):
+            support_set_features, support_set_labels = \
+                tdcnn_demo(video_data, None, None, gt_twins, True)
+            feature_vectors.append(support_set_features)
+            feature_labels.append(support_set_labels)
+            del video_data
+        all_fewshot_features = (torch.cat(feature_vectors), torch.cat(feature_labels))
 
-        pickle.dump(all_fewshot_features, open('/home/vltava/fewshot_features.pkl', 'wb'))
+        pickle.dump(all_fewshot_features, open(FEWSHOT_FEATURES_PATH, 'wb'))
 
-    print('Got %d few shot features' % len(all_fewshot_features))
+    support_set_features = all_fewshot_features[0]
+    support_set_labels = all_fewshot_features[1]
+
+    print(f'Got {support_set_features.shape[0]} few shot features')
+    print(f'Labels: {support_set_labels}')
 
     data_tic = time.time()
+    print(f'Start time: {data_tic}')
     for i, (video_data, gt_twins, num_gt, video_info) in enumerate(dataloader):
         video_data = video_data.cuda()
         gt_twins = gt_twins.cuda()
@@ -145,17 +152,14 @@ def test_net(tdcnn_demo, dataloader, args, fewshot_trimmed_dataloader, loaded_al
         data_time = data_toc - data_tic
 
         det_tic = time.time()
-        rois, cls_prob, twin_pred = tdcnn_demo(video_data, gt_twins, whole_vid_for_testing=False)
-        print('rois shape: %s' % str(rois.shape))
-        print('pooled_feat dim: %s' % str(tdcnn_demo.module.pooled_feat.shape))
-        # combined_pooled_feat.append(torch.squeeze(tdcnn_demo.module.pooled_feat))
-        #        rpn_loss_cls, rpn_loss_twin, \
-        #        RCNN_loss_cls, RCNN_loss_twin, rois_label = tdcnn_demo(video_data, gt_twins)
+        rois, cls_prob, twin_pred, fewshot_scores = \
+            tdcnn_demo(video_data,
+                       torch.cat(args.batch_size * [support_set_features.unsqueeze(0)]),
+                       torch.cat(args.batch_size * [support_set_labels.unsqueeze(0)]),
+                       gt_twins)
 
-        scores_all = cls_prob.data
+        scores_all = fewshot_scores.data
         twins = rois.data[:, :, 1:3]
-
-        print('cls_prob shape: %s, twin_pred shape: %s' % (str(cls_prob.shape), str(twin_pred.shape)))
 
         if cfg.TEST.TWIN_REG:
             # Apply bounding-twin regression deltas
@@ -179,57 +183,33 @@ def test_net(tdcnn_demo, dataloader, args, fewshot_trimmed_dataloader, loaded_al
         for b in range(batch_size):
             misc_tic = time.time()
             print(video_info[b])
-            scores = scores_all[b]  # scores.squeeze()
+            # cls_prob scores are not helpful for fewshot since these are 21-class output (0 = background)
+            # and the new example doesn't appear in the training data
             pred_twins = pred_twins_all[b]  # .squeeze()
 
+            fewshot_scores_of_batch = fewshot_scores[b]
+
             # skip j = 0, because it's the background class
-            class_with_highest_score = None
-            highest_score = None
-            for j in xrange(1, args.num_classes):
-                # We know that the test example is one among the 14
-                if j not in loaded_all_few_shot_features:
-                    continue
+            for j in range(fewshot_scores_of_batch.shape[1]):
+                inds = torch.nonzero(fewshot_scores_of_batch[:, j] > thresh).view(-1)
 
-                # scores[:, j] shape: torch.Size([300])
-                for score_i in range(scores[:, j].shape[0]):
-                    vec1 = torch.squeeze(tdcnn_demo.module.pooled_feat[score_i])
-                    vec2 = loaded_all_few_shot_features[j]
-                    scores[:, j][score_i] = torch.nn.functional.cosine_similarity(
-                        vec1, vec2, dim=0)
-                    # print('updated score at %d is %f' % (score_i, scores[:, j][score_i]))
-
-                inds = torch.nonzero(scores[:, j] > thresh).view(-1)
-
-                # if there is det
+                # if there is detection
                 if inds.numel() > 0:
-                    cls_scores = scores[:, j][inds]
+                    cls_scores = fewshot_scores_of_batch[:, j][inds]
                     _, order = torch.sort(cls_scores, 0, True)
                     cls_twins = pred_twins[inds][:, j * 2:(j + 1) * 2]
-                    # print(inds)
 
                     cls_dets = torch.cat((cls_twins, cls_scores.unsqueeze(1)), 1)
-                    # print('cls_dets shape: %s' % str(cls_dets.shape))
-                    # print(cls_dets)
-                    # cls_dets = torch.cat((cls_twins, cls_scores), 1)
                     cls_dets = cls_dets[order]
                     keep = nms(cls_dets, cfg.TEST.NMS)
-                    if (len(keep) > 0):
+                    if len(keep) > 0:
                         cls_dets = cls_dets[keep.view(-1).long()]
-                        print("activity: ", j)
+                        print("activity: ", support_set_labels[j].item())
                         print(cls_dets.cpu().numpy())
 
                     all_twins[j][i * batch_size + b] = cls_dets.cpu().numpy()
-                    max_score = torch.max(cls_dets[:, 2])
-                    if highest_score is None or max_score > highest_score:
-                        highest_score = max_score
-                        class_with_highest_score = j
                 else:
                     all_twins[j][i * batch_size + b] = empty_array
-
-            if class_with_highest_score is not None:
-                print('======================================')
-                print('Class with highest score is %d with score %f' % (class_with_highest_score, highest_score))
-                print('======================================')
 
             # Limit to max_per_video detections *over all classes*
             if max_per_video > 0:
@@ -297,15 +277,12 @@ if __name__ == '__main__':
 
     trimmed_support_set_roidb_path = os.path.join(args.roidb_dir, args.dataset, "trimmed_14_cls.pkl")
     trimmed_support_set_roidb = get_roidb(trimmed_support_set_roidb_path)
-    trimmed_support_set_dataset = roibatchLoader(trimmed_support_set_roidb, phase='train')
-    trimmed_support_set_dataloader = torch.utils.data.DataLoader(trimmed_support_set_dataset, batch_size=args.batch_size,
-                                                                 num_workers=args.num_workers, shuffle=False)
 
     untrimmed_test_roidb_path = args.roidb_dir + "/" + args.dataset + "/" + args.imdbval_name
     untrimmed_test_roidb = get_roidb(untrimmed_test_roidb_path)
     untrimmed_test_dataset = roibatchLoader(untrimmed_test_roidb, phase='test')
     untrimmed_test_dataloader = torch.utils.data.DataLoader(untrimmed_test_dataset, batch_size=args.batch_size,
-                                             num_workers=args.num_workers, shuffle=False)
+                                                            num_workers=args.num_workers, shuffle=True)
 
     num_videos = len(untrimmed_test_dataset)
     args.num_videos = num_videos
@@ -322,7 +299,7 @@ if __name__ == '__main__':
 
     # initilize the network here.
     if args.net == 'c3d':
-        tdcnn_demo = c3d_tdcnn(pretrained=False)
+        tdcnn_demo = c3d_tdcnn_fewshot(pretrained=False)
     elif args.net == 'res18':
         tdcnn_demo = resnet_tdcnn(depth=18, pretrained=False)
     elif args.net == 'res34':
@@ -336,13 +313,6 @@ if __name__ == '__main__':
     # save memory
     for key, value in tdcnn_demo.named_parameters(): value.requires_grad = False
     print(tdcnn_demo)
-
-    #    if args.cuda and torch.cuda.is_available():
-    #        tdcnn_demo = tdcnn_demo.cuda()
-    #        if isinstance(args.gpus, int):
-    #            args.gpus = [args.gpus]
-    # assert len(args.gpus) == args.batch_size, "only support one batch_size for one gpu"
-    #        tdcnn_demo = nn.parallel.DataParallel(tdcnn_demo, device_ids = args.gpus)
 
     print("load checkpoint %s" % (load_name))
     checkpoint = torch.load(load_name)
@@ -358,4 +328,4 @@ if __name__ == '__main__':
         # assert len(args.gpus) == args.batch_size, "only support one batch_size for one gpu"
         tdcnn_demo = nn.parallel.DataParallel(tdcnn_demo, device_ids=args.gpus)
 
-    test_net(tdcnn_demo, untrimmed_test_dataloader, args, trimmed_support_set_dataloader, loaded_all_few_shot_features=pickle.load(open('/home/vltava/fewshot_features.pkl', 'rb')))
+    test_net(tdcnn_demo, untrimmed_test_dataloader, args, trimmed_support_set_roidb)

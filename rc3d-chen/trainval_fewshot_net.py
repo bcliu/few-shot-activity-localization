@@ -157,15 +157,16 @@ def sample_support_set_classes(gt_twins, all_train_classes):
     randomly_selected = random.sample(classes_not_selected, SUPPORT_SET_SIZE - len(classes_in_ground_truths))
     return list(classes_in_ground_truths) + randomly_selected
 
-def create_sampled_support_set_dataset(support_set_roidb, classes_to_sample, samples_per_class=1):
+def create_sampled_support_set_dataset(support_set_roidb, classes_to_sample, samples_per_class=1, batch_size=None, num_workers=None):
     sampled_roidb = []
     for cls in classes_to_sample:
         idx_of_class = [idx for idx, val in enumerate(support_set_roidb) if cls in val['gt_classes']]
         sampled_idx = random.sample(idx_of_class, samples_per_class)
         sampled_roidb += [support_set_roidb[i] for i in sampled_idx]
     dataset = roibatchLoader(sampled_roidb)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=len(sampled_roidb),
-                                             num_workers=args.num_workers, shuffle=False)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=len(sampled_roidb) if batch_size is None else batch_size,
+                                             num_workers=args.num_workers if num_workers is None else num_workers,
+                                             shuffle=False)
     return dataloader
 
 def train_net(tdcnn_demo, dataloader, optimizer, args, train_class_list, support_set_roidb):

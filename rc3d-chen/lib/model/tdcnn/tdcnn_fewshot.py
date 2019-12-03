@@ -93,6 +93,15 @@ class _TDCNN_Fewshot(nn.Module):
 
         return cross_entropy
 
+    def compute_fewshot_predictions(self, support_set_features, support_set_labels, test_features):
+        similarities = torch.zeros(test_features.shape[0], support_set_labels.shape[0]).cuda()
+        for i in range(support_set_labels.shape[0]):
+            similarities[:, i] = F.cosine_similarity(support_set_features[i].unsqueeze(0), test_features)
+        return similarities.unsqueeze(0)
+        # max_scores = torch.max(similarities, dim=1)
+        # Note: this won't work if batch_size of this thread > 1. Need to handle batch input
+        # return max_scores[0].unsqueeze(0), max_scores[1].unsqueeze(0)
+
     def forward(self, video_data, support_set_features, support_set_labels, gt_twins, is_support_set=False):
         """
         :param video_data:
@@ -110,8 +119,8 @@ class _TDCNN_Fewshot(nn.Module):
 
         support_set_features = support_set_features.squeeze()
         support_set_labels = support_set_labels.squeeze()
-        assert support_set_labels.shape[0] == SUPPORT_SET_SIZE
-        assert support_set_features.shape[0] == SUPPORT_SET_SIZE
+        # assert support_set_labels.shape[0] == SUPPORT_SET_SIZE
+        # assert support_set_features.shape[0] == SUPPORT_SET_SIZE
 
         gt_twins = gt_twins.data
         # prepare data
@@ -161,6 +170,8 @@ class _TDCNN_Fewshot(nn.Module):
             twin_pred = twin_pred_select.squeeze(1)
 
             fewshot_cls_loss = self.compute_fewshot_cls_loss(support_set_features, support_set_labels, pooled_feat, rois_label)
+        else:
+            fewshot_pred = self.compute_fewshot_predictions(support_set_features, support_set_labels, pooled_feat)
 
         # compute object classification probability
         cls_score = self.RCNN_cls_score(pooled_feat)
@@ -197,7 +208,7 @@ class _TDCNN_Fewshot(nn.Module):
             return rois, cls_prob, twin_pred, rpn_loss_cls, rpn_loss_twin, RCNN_loss_cls, RCNN_loss_twin, rois_label,\
                    fewshot_cls_loss.unsqueeze(0).cuda()
         else:
-            return rois, cls_prob, twin_pred
+            return rois, cls_prob, twin_pred, fewshot_pred
 
     def _init_weights(self):
         def normal_init(m, mean, stddev, truncated=False):
