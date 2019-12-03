@@ -21,6 +21,7 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.optim as optim
 import pickle
+import random
 from roi_data_layer.roibatchLoader import roibatchLoader
 from model.utils.config import cfg, cfg_from_file, cfg_from_list, get_output_dir
 from model.rpn.twin_transform import clip_twins
@@ -147,18 +148,30 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
     print(f'Unique labels: {unique_support_set_labels}')
 
     data_tic = time.time()
-    for i, (video_data, gt_twins, num_gt, video_info) in enumerate(dataloader):
+    for i, (video_data, gt_twins, num_gt, video_info, fewshot_label) in enumerate(dataloader):
         video_data = video_data.cuda()
         gt_twins = gt_twins.cuda()
         batch_size = video_data.shape[0]
         data_toc = time.time()
         data_time = data_toc - data_tic
 
+        batch_support_set_size = 5
+
+        unique_labels_in_test = fewshot_label.cpu().unique().numpy().tolist()
+        batch_support_set_labels = unique_labels_in_test
+        if len(unique_labels_in_test) < batch_support_set_size:
+            other_labels = torch.cat([l.unsqueeze(0) for l in unique_support_set_labels if l not in unique_labels_in_test]).cpu().numpy().tolist()
+            batch_support_set_labels = unique_labels_in_test + random.sample(other_labels, batch_support_set_size - len(unique_labels_in_test))
+        batch_support_set_indices = [i for i, v in enumerate(support_set_labels) if v in batch_support_set_labels]
+        batch_support_set_features = support_set_features[batch_support_set_indices]
+        batch_support_set_labels = support_set_labels[batch_support_set_indices]
+        unique_batch_support_set_labels = batch_support_set_labels.cpu().unique(sorted=True).cuda()
+
         det_tic = time.time()
         rois, cls_prob, twin_pred, fewshot_scores, fewshot_scores_softmax = \
             tdcnn_demo(video_data,
-                       torch.cat(args.batch_size * [support_set_features.unsqueeze(0)]),
-                       torch.cat(args.batch_size * [support_set_labels.unsqueeze(0)]),
+                       torch.cat(args.batch_size * [batch_support_set_features.unsqueeze(0)]),
+                       torch.cat(args.batch_size * [batch_support_set_labels.unsqueeze(0)]),
                        gt_twins)
 
         scores_all = fewshot_scores.data
@@ -190,17 +203,17 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
             # and the new example doesn't appear in the training data
             pred_twins = pred_twins_all[b]  # .squeeze()
 
-            fewshot_scores_of_batch = torch.zeros(fewshot_scores.shape[1], unique_support_set_labels.shape[0]).cuda()
-            fewshot_scores_softmax_of_batch = torch.zeros(fewshot_scores.shape[1], unique_support_set_labels.shape[0]).cuda()
+            fewshot_scores_of_batch = torch.zeros(fewshot_scores.shape[1], batch_support_set_size).cuda()
+            fewshot_scores_softmax_of_batch = torch.zeros(fewshot_scores.shape[1], batch_support_set_size).cuda()
 
-            for j in range(unique_support_set_labels.shape[0]):
-                idx_of_label_with_id = (support_set_labels == unique_support_set_labels[j]).nonzero().squeeze()
+            for j in range(batch_support_set_size):
+                idx_of_label_with_id = (batch_support_set_labels == unique_batch_support_set_labels[j]).nonzero().squeeze()
                 fewshot_scores_of_batch[:, j] = fewshot_scores[b, :, idx_of_label_with_id].mean(dim=1)  # Average scores of the same label
                 fewshot_scores_softmax_of_batch[:, j] = fewshot_scores_softmax[b, :, idx_of_label_with_id].sum(dim=1)
 
                 inds = torch.nonzero(fewshot_scores_of_batch[:, j] > thresh).view(-1)
 
-                label_id = support_set_labels[j].item()
+                label_id = batch_support_set_labels[j].item()
 
                 # if there is detection
                 if inds.numel() > 0:
@@ -221,8 +234,8 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
                 # else:
                     # all_twins[label_id][i * batch_size + b] = empty_array
 
-            most_likely_labels = unique_support_set_labels[torch.sort(fewshot_scores_of_batch, descending=True)[1]]
-            most_likely_labels_softmax = unique_support_set_labels[torch.sort(fewshot_scores_softmax_of_batch, descending=True)[1]]
+            most_likely_labels = unique_batch_support_set_labels[torch.sort(fewshot_scores_of_batch, descending=True)[1]]
+            most_likely_labels_softmax = unique_batch_support_set_labels[torch.sort(fewshot_scores_softmax_of_batch, descending=True)[1]]
 
             # Limit to max_per_video detections *over all classes*
             # if max_per_video > 0:
