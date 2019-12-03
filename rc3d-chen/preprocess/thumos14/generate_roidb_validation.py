@@ -30,12 +30,13 @@ train_segment = dataset_label_parser(META_DIR + 'test', 'test', use_ambiguous=Fa
 
 ###
 
-def generate_roi(video, start, end, stride, split):
+def generate_roi(video, start, end, stride, split, fewshot_label):
     tmp = {}
     tmp['flipped'] = False
     tmp['frames'] = np.array([[0, start, end, stride]])
     tmp['bg_name'] = os.path.join(FRAME_DIR, split, video)
     tmp['fg_name'] = os.path.join(FRAME_DIR, split, video)
+    tmp['fewshot_label'] = fewshot_label
     #  print (os.path.join(FRAME_DIR, split, video, 'image_' + str(end-1).zfill(5) + '.jpg'))
     if not os.path.isfile(os.path.join(FRAME_DIR, split, video, 'image_' + str(end - 1).zfill(5) + '.jpg')):
         print(os.path.join(FRAME_DIR, split, video, 'image_' + str(end - 1).zfill(5) + '.jpg'))
@@ -74,7 +75,7 @@ def generate_roidb(split, segment):
 
                     # Add data
                     if len(rois) > 0:
-                        tmp = generate_roi(vid, start, end, stride, split)
+                        tmp = generate_roi(vid, start, end, stride, split, int(rois[0, 2]))
                         roidb.append(tmp)
 
                         if USE_FLIPPED:
@@ -92,7 +93,7 @@ def generate_roidb(split, segment):
 
                     # Add data
                     if len(rois) > 0:
-                        tmp = generate_roi(vid, start, end, stride, split)
+                        tmp = generate_roi(vid, start, end, stride, split, int(rois[0, 2]))
                         roidb.append(tmp)
 
                         if USE_FLIPPED:

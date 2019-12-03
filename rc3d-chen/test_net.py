@@ -33,6 +33,7 @@ from model.tdcnn.i3d import I3D, i3d_tdcnn
 from model.utils.blob import prep_im_for_blob, video_list_to_blob
 from model.tdcnn.resnet import resnet34, resnet50, resnet_tdcnn
 from os.path import exists
+from trainval_fewshot_net import create_sampled_support_set_dataset
 
 # np.set_printoptions(threshold='nan')
 DEBUG = False
@@ -96,7 +97,10 @@ def comp_pairwise_dist():
 
 
 def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
-    FEWSHOT_FEATURES_PATH = '/home/vltava/fewshot_features.pkl'
+    FEWSHOT_FEATURES_PATH = '/home/vltava/fewshot_features_5_shot.pkl'
+
+    dataloader = untrimmed_test_dataloader
+
     start = time.time()
     # TODO: Add restriction for max_per_video
     max_per_video = 0
@@ -112,17 +116,13 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
     empty_array = np.transpose(np.array([[], [], []]), (1, 0))
 
     if exists(FEWSHOT_FEATURES_PATH):
-        all_fewshot_features = pickle.load(open('/home/vltava/fewshot_features.pkl', 'rb'))
+        all_fewshot_features = pickle.load(open(FEWSHOT_FEATURES_PATH, 'rb'))
     else:
-        import trainval_fewshot_net
-        import importlib
-        importlib.reload(trainval_fewshot_net)
-
-        support_set_dataloader = trainval_fewshot_net.create_sampled_support_set_dataset(trimmed_support_set_roidb,
-                                                                                         [2, 4, 6, 7, 8, 9, 10, 12, 13,
-                                                                                          14, 15, 16, 18, 19],
-                                                                                         batch_size=args.batch_size,
-                                                                                         num_workers=args.num_workers)
+        support_set_dataloader = create_sampled_support_set_dataset(trimmed_support_set_roidb,
+                                                                    [2, 4, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 18, 19],
+                                                                    batch_size=args.batch_size,
+                                                                    num_workers=args.num_workers,
+                                                                    samples_per_class=5)
         print('Loading fewshot trimmed videos')
         feature_vectors = []
         feature_labels = []
@@ -141,9 +141,12 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
 
     print(f'Got {support_set_features.shape[0]} few shot features')
     print(f'Labels: {support_set_labels}')
+    print(f'Features shape: {support_set_features.shape}')
+
+    unique_support_set_labels = support_set_labels.cpu().unique(sorted=True).cuda()
+    print(f'Unique labels: {unique_support_set_labels}')
 
     data_tic = time.time()
-    print(f'Start time: {data_tic}')
     for i, (video_data, gt_twins, num_gt, video_info) in enumerate(dataloader):
         video_data = video_data.cuda()
         gt_twins = gt_twins.cuda()
@@ -152,7 +155,7 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
         data_time = data_toc - data_tic
 
         det_tic = time.time()
-        rois, cls_prob, twin_pred, fewshot_scores = \
+        rois, cls_prob, twin_pred, fewshot_scores, fewshot_scores_softmax = \
             tdcnn_demo(video_data,
                        torch.cat(args.batch_size * [support_set_features.unsqueeze(0)]),
                        torch.cat(args.batch_size * [support_set_labels.unsqueeze(0)]),
@@ -187,11 +190,17 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
             # and the new example doesn't appear in the training data
             pred_twins = pred_twins_all[b]  # .squeeze()
 
-            fewshot_scores_of_batch = fewshot_scores[b]
+            fewshot_scores_of_batch = torch.zeros(fewshot_scores.shape[1], unique_support_set_labels.shape[0]).cuda()
+            fewshot_scores_softmax_of_batch = torch.zeros(fewshot_scores.shape[1], unique_support_set_labels.shape[0]).cuda()
 
-            # skip j = 0, because it's the background class
-            for j in range(fewshot_scores_of_batch.shape[1]):
+            for j in range(unique_support_set_labels.shape[0]):
+                idx_of_label_with_id = (support_set_labels == unique_support_set_labels[j]).nonzero().squeeze()
+                fewshot_scores_of_batch[:, j] = fewshot_scores[b, :, idx_of_label_with_id].mean(dim=1)  # Average scores of the same label
+                fewshot_scores_softmax_of_batch[:, j] = fewshot_scores_softmax[b, :, idx_of_label_with_id].sum(dim=1)
+
                 inds = torch.nonzero(fewshot_scores_of_batch[:, j] > thresh).view(-1)
+
+                label_id = support_set_labels[j].item()
 
                 # if there is detection
                 if inds.numel() > 0:
@@ -204,22 +213,26 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
                     keep = nms(cls_dets, cfg.TEST.NMS)
                     if len(keep) > 0:
                         cls_dets = cls_dets[keep.view(-1).long()]
-                        print("activity: ", support_set_labels[j].item())
+                        print("activity: ", label_id)
                         print(cls_dets.cpu().numpy())
 
-                    all_twins[j][i * batch_size + b] = cls_dets.cpu().numpy()
-                else:
-                    all_twins[j][i * batch_size + b] = empty_array
+                    # TODO: fix this
+                    # all_twins[label_id][i * batch_size + b] = cls_dets.cpu().numpy()
+                # else:
+                    # all_twins[label_id][i * batch_size + b] = empty_array
+
+            most_likely_labels = unique_support_set_labels[torch.sort(fewshot_scores_of_batch, descending=True)[1]]
+            most_likely_labels_softmax = unique_support_set_labels[torch.sort(fewshot_scores_softmax_of_batch, descending=True)[1]]
 
             # Limit to max_per_video detections *over all classes*
-            if max_per_video > 0:
-                video_scores = np.hstack([all_twins[j][i * batch_size + b][:, -1]
-                                          for j in xrange(1, args.num_classes)])
-                if len(video_scores) > max_per_video:
-                    video_thresh = np.sort(video_scores)[-max_per_video]
-                    for j in xrange(1, args.num_classes):
-                        keep = np.where(all_twins[j][i * batch_size + b][:, -1] >= video_thresh)[0]
-                        all_twins[j][i * batch_size + b] = all_twins[j][i * batch_size + b][keep, :]
+            # if max_per_video > 0:
+            #     video_scores = np.hstack([all_twins[j][i * batch_size + b][:, -1]
+            #                               for j in xrange(1, args.num_classes)])
+            #     if len(video_scores) > max_per_video:
+            #         video_thresh = np.sort(video_scores)[-max_per_video]
+            #         for j in xrange(1, args.num_classes):
+            #             keep = np.where(all_twins[j][i * batch_size + b][:, -1] >= video_thresh)[0]
+            #             all_twins[j][i * batch_size + b] = all_twins[j][i * batch_size + b][keep, :]
 
             misc_toc = time.time()
             nms_time = misc_toc - misc_tic
