@@ -16,11 +16,11 @@ mAP=[];
 REC_all=[];
 
 detfilename = '../tmp.txt';
-gtpath = './annotation/annotation_test/';
+gtpath = '/home/vltava/disk2/THUMOS14_valtest_combined_fewshot/annotations_test/';
 subset = 'test';
 new_length = 16;
-test_thresholds =   [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7];
-nms_thresholds =    [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
+test_thresholds =   [0.1, 0.5]; % [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7];
+nms_thresholds =    [0.0, 0.4]; % [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
 % nms_thresholds =    [0.02, 0.06, 0.08, 0.12, 0.3, 0.4, 0.4];
 cls_thresh = 0.000001;
 pro_thresh = 0.1;
@@ -84,7 +84,7 @@ for index = 1:length(test_thresholds)
     AP_all{end+1}=ap_all;
     PR_all{end+1}=pr_all;
     ave_rec = 0;
-    for ii=1:20
+    for ii=1:14
         ave_rec = ave_rec + pr_all(ii).rec(end);
     end
     ave_rec = ave_rec/20;

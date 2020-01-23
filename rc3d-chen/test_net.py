@@ -75,6 +75,8 @@ def parse_args():
                         help='roidb_dir')
     parser.add_argument('--gpus', dest='gpus', nargs='+', type=int, default=0,
                         help='gpu ids.')
+    parser.add_argument('--softmax_fewshot_score', dest='softmax_fewshot_score', action='store_true')
+    parser.add_argument('--fewshot_score_threshold', dest='fewshot_score_threshold', type=float)
     args = parser.parse_args()
     return args
 
@@ -97,12 +99,10 @@ def comp_pairwise_dist():
         print('Those closest to %d are %s' % (i, str(sorted_idx[:5])))
 
 
-def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
+def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb, thresh=0.7, use_softmax_fewshot_score=False):
     FEWSHOT_FEATURES_PATH = '/home/vltava/fewshot_features_5_shot.pkl'
 
     start = time.time()
-
-    thresh = 0.7
 
     _t = {'im_detect': time.time(), 'misc': time.time()}
 
@@ -195,20 +195,27 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
             fewshot_scores_of_batch = torch.zeros(fewshot_scores.shape[1], batch_support_set_size).cuda()
             fewshot_scores_softmax_of_batch = torch.zeros(fewshot_scores.shape[1], batch_support_set_size).cuda()
 
+            has_detections = False
+
             for j in range(batch_support_set_size):
                 idx_of_label_with_id = (batch_support_set_labels == unique_batch_support_set_labels[j]).nonzero().squeeze()
                 fewshot_scores_of_batch[:, j] = fewshot_scores[b, :, idx_of_label_with_id].mean(dim=1)  # Average scores of the same label
                 fewshot_scores_softmax_of_batch[:, j] = fewshot_scores_softmax[b, :, idx_of_label_with_id].sum(dim=1)
 
-                inds = torch.nonzero(fewshot_scores_of_batch[:, j] > thresh).view(-1)
+                if use_softmax_fewshot_score:
+                    inds = torch.nonzero(fewshot_scores_softmax_of_batch[:, j] > thresh).view(-1)
+                else:
+                    inds = torch.nonzero(fewshot_scores_of_batch[:, j] > thresh).view(-1)
 
                 label_id = unique_batch_support_set_labels[j].item()
 
                 # if there is detection
                 if inds.numel() > 0:
+                    has_detections = True
                     cls_scores = fewshot_scores_of_batch[:, j][inds]
                     _, order = torch.sort(cls_scores, 0, True)
-                    cls_twins = pred_twins[inds][:, j * 2:(j + 1) * 2]
+                    # This doesn't quite make sense because label_id column has no meaning to the network
+                    cls_twins = pred_twins[inds][:, label_id * 2:(label_id + 1) * 2]
 
                     cls_dets = torch.cat((cls_twins, cls_scores.unsqueeze(1)), 1)
                     cls_dets = cls_dets[order]
@@ -223,8 +230,22 @@ def test_net(tdcnn_demo, dataloader, args, trimmed_support_set_roidb):
                     # if label_id == fewshot_label[b].item():
                         # print(f'**** FAILED TO DETECT CLASS: {fewshot_scores_softmax_of_batch[:, j].mean()}')
 
-            most_likely_labels = unique_batch_support_set_labels[torch.sort(fewshot_scores_of_batch, descending=True)[1]]
-            most_likely_labels_softmax = unique_batch_support_set_labels[torch.sort(fewshot_scores_softmax_of_batch, descending=True)[1]]
+            most_likely_labels = unique_batch_support_set_labels[torch.sort(fewshot_scores_of_batch, descending=True)[1]][:50]
+            most_likely_labels_softmax = unique_batch_support_set_labels[torch.sort(fewshot_scores_softmax_of_batch, descending=True)[1]][:50]
+
+            if not has_detections:
+                sorted_scores, sorted_scores_idx = torch.sort(fewshot_scores_softmax_of_batch, descending=True)
+                sorted_scores = sorted_scores[:, 0]
+                sorted_scores_idx = sorted_scores_idx[:, 0]
+                sorted_scores_rows, sorted_scores_rows_idx = torch.sort(sorted_scores, descending=True)
+                sorted_scores_rows = sorted_scores_rows[:10]
+                sorted_scores_rows_idx = sorted_scores_rows_idx[:10]
+                sorted_scores_cols_idx = sorted_scores_idx[sorted_scores_rows_idx]
+                unique_cols_idx = sorted_scores_cols_idx.cpu().unique(sorted=True).cuda()
+                for label_idx in unique_cols_idx:
+                    cls_twins = pred_twins[sorted_scores_rows_idx][:, label_idx * 2:(label_idx + 1) * 2]
+                    cls_dets = torch.cat((cls_twins, sorted_scores_rows.unsqueeze(1)), 1)
+                # print(f'No detections. Most likely labels are {most_likely_labels}, {most_likely_labels_softmax}')
 
             misc_toc = time.time()
             nms_time = misc_toc - misc_tic
@@ -299,8 +320,8 @@ if __name__ == '__main__':
     output_dir = args.output_dir + "/" + args.net + "/" + args.dataset
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    load_name = os.path.join(model_dir,
-                             'tdcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
+    load_name = os.path.join(model_dir, 'tdcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
+    # load_name = '/home/vltava/few-shot-activity-localization/rc3d-chen/models/c3d/thumos14/without_metatraining_models/tdcnn_1_7_1960.pth'
 
     # initilize the network here.
     if args.net == 'c3d':
@@ -333,4 +354,7 @@ if __name__ == '__main__':
         # assert len(args.gpus) == args.batch_size, "only support one batch_size for one gpu"
         tdcnn_demo = nn.parallel.DataParallel(tdcnn_demo, device_ids=args.gpus)
 
-    test_net(tdcnn_demo, untrimmed_test_dataloader, args, trimmed_support_set_roidb)
+    print(f'Using {"softmax " if args.softmax_fewshot_score else " "}threshold of {args.fewshot_score_threshold}')
+
+    test_net(tdcnn_demo, untrimmed_test_dataloader, args, trimmed_support_set_roidb, args.fewshot_score_threshold,
+             args.softmax_fewshot_score)

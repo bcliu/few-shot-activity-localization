@@ -51,14 +51,15 @@ if nargin<3
 end
 
 
-[th14classids,th14classnames]=textread([gtpath '/detclasslist.txt'],'%d%s');
+[th14classids,th14classnames]=textread([gtpath 'detclasslist.txt'],'%d%s');
   
 % read ground truth
 %
 
 clear gtevents
 gteventscount=0;
-th14classnamesamb=cat(1,th14classnames,'Ambiguous');
+%th14classnamesamb=cat(1,th14classnames,'Ambiguous');
+th14classnamesamb = th14classnames;
 for i=1:length(th14classnamesamb)
   class=th14classnamesamb{i};
   gtfilename=[gtpath '/' class '_' subset '.txt'];

@@ -253,7 +253,7 @@ if __name__ == '__main__':
     elif args.net == 'res50':
         tdcnn_demo = resnet_tdcnn(depth=50, pretrained=True)
     elif args.net == 'eco':
-        tdcnn_demo = eco_tdcnn(pretrained=True)        
+        tdcnn_demo = eco_tdcnn(pretrained=True)
     else:
         print("network is not defined")
 

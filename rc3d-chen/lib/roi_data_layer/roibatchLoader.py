@@ -40,8 +40,8 @@ class roibatchLoader(data.Dataset):
         if self.phase == 'test':
             video_info = ''
             for key, value in item.items():
-                if not key == 'fewshot_label':
-                    video_info = video_info + " {}: {}\n".format(key, value)
+                # if not key == 'fewshot_label':
+                video_info = video_info + " {}: {}\n".format(key, value)
             # drop the last "\n"
             video_info = video_info[:-1]
             return data, gt_windows_padding, num_gt, video_info, item['fewshot_label']
